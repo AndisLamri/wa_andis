@@ -1,0 +1,6 @@
+.env
+.git
+.github
+.wa_session
+.wwebjs_cache
+node_modules
