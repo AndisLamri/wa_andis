@@ -17,7 +17,7 @@ const waClient = new Client({
     dataPath: './.wa_session'
   }),
   puppeteer: {
-    headless: true,
+    headless: 'shell',
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
