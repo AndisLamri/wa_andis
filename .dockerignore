@@ -2,5 +2,5 @@
 .git
 .github
 .wa_session
-.wwebjs_cache
+.baileys_session
 node_modules

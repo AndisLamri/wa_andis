@@ -7,25 +7,8 @@ require('dotenv').config();
 const http = require('node:http');
 const KNOWLEDGE_BASE = require('./knowledgeBase');
 
-const { Client, LocalAuth } = require('whatsapp-web.js');
 const Groq = require('groq-sdk');
 const qrcode = require('qrcode-terminal');
-
-// ==== INISIALISASI ====
-const waClient = new Client({
-  authStrategy: new LocalAuth({
-    dataPath: './.wa_session'
-  }),
-  puppeteer: {
-    headless: 'shell',
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu'
-    ]
-  }
-});
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY
@@ -35,7 +18,6 @@ const GROQ_MODEL = 'openai/gpt-oss-120b';
 
 // ==== STATUS SISTEM ====
 let isReady = false;
-const pausedUsers = new Set();
 const conversationHistory = new Map();
 const MAX_HISTORY_LENGTH = 5;
 
@@ -154,73 +136,98 @@ async function tanyaGroq(nomorPengirim, pesanPengguna) {
   }
 }
 
-// ==== EVENT: QR CODE ====
-waClient.on('qr', (qrcodeData) => {
-  console.log('\n========================================');
-  console.log('  SILAKAN SCAN QR CODE DI BAWAH INI');
-  console.log('  Gunakan menu "Perangkat Tertaut" di WhatsApp');
-  console.log('========================================\n');
-  qrcode.generate(qrcodeData, { small: true });
-});
+function extractTextMessage(message) {
+  let content = message;
+  while (content) {
+    const text = content.conversation || content.extendedTextMessage?.text;
+    if (text) return text;
 
-// ==== EVENT: SIAP BEROPERASI ====
-waClient.on('ready', () => {
-  isReady = true;
-  console.log('\n✅ BOT SIAP BEROPERASI — WhatsApp terhubung!');
-  console.log(`🕒 Waktu mulai: ${getCurrentTimeWIB()}`);
-  console.log('--------------------------------------------------');
-});
-
-// ==== EVENT: PESAN DIBACA (JEDA OTOMATIS) ====
-waClient.on('message_ack', (pesan, status) => {
-  if (status === 3 && pesan.from && !pesan.fromMe) {
-    pausedUsers.add(pesan.from);
-    console.log(`⏸️ [JEDA] ${pesan.from} — Dibaca manusia`);
+    content = content.ephemeralMessage?.message
+      || content.viewOnceMessage?.message
+      || content.viewOnceMessageV2?.message
+      || content.documentWithCaptionMessage?.message;
   }
-});
+  return '';
+}
 
-// ==== EVENT: PESAN MASUK — TANPA PANGGILAN getChat() SAMA SEKALI ====
-waClient.on('message', async (msg) => {
+async function handleIncomingMessage(sock, message) {
   try {
-    // ------ LEWATI JIKA BELUM SIAP / DARI DIRI SENDIRI ------
-    if (!isReady || msg.fromMe) return;
+    const nomorPengirim = message.key.remoteJid;
+    if (!isReady || message.key.fromMe || !nomorPengirim) return;
+    if (nomorPengirim.endsWith('@g.us') || nomorPengirim.endsWith('@broadcast')) return;
 
-    // ------ LEWATI PESAN GRUP — Cek langsung dari ID tanpa panggil fungsi ------
-    if (msg.from.endsWith('@g.us')) return;
-
-    // ------ HANYA PROSES PESAN TEKS ------
-    if (msg.type !== 'chat' || !msg.body) return;
-
-    const nomorPengirim = msg.from;
-    const teksPesan = msg.body.trim();
+    const teksPesan = extractTextMessage(message.message).trim();
     if (!teksPesan) return;
 
-    // ------ KELOLA STATUS JEDA ------
-    if (pausedUsers.has(nomorPengirim)) {
-      pausedUsers.delete(nomorPengirim);
-      console.log(`▶️ [LANJUT] ${nomorPengirim} — Pesan baru, AI aktif kembali`);
-      return; // Aktifkan kembali tanpa balas pesan pemicu
-    }
-
-    // ------ SIMULASI MENGETIK — TANPA panggil sendStateTyping() ------
-    // Tunda alami 1–2 detik sebagai pengganti efek mengetik
-    await new Promise(r => setTimeout(r, 1000 + Math.floor(Math.random() * 1000)));
-
-    if (pausedUsers.has(nomorPengirim)) return;
-
-    // ------ PANGGIL AI & KIRIM BALASAN ------
+    await new Promise(resolve => setTimeout(resolve, 1000 + Math.floor(Math.random() * 1000)));
     const jawaban = await tanyaGroq(nomorPengirim, teksPesan);
-    await msg.reply(jawaban);
-
+    await sock.sendMessage(nomorPengirim, { text: jawaban }, { quoted: message });
     console.log(`✅ [${nomorPengirim}] Balasan terkirim (${jawaban.length} karakter)`);
-
   } catch (err) {
     console.error('[PEMROSESAN GAGAL]', err.message || err);
   }
-});
+}
 
-// ==== MULAIKAN ====
-waClient.initialize().catch(err => {
+async function startWhatsApp() {
+  const {
+    default: makeWASocket,
+    DisconnectReason,
+    useMultiFileAuthState
+  } = await import('@whiskeysockets/baileys');
+  const { state, saveCreds } = await useMultiFileAuthState('./.baileys_session');
+  const sock = makeWASocket({
+    auth: state,
+    browser: ['wa_ai', 'Chrome', '1.0.0'],
+    logger: require('pino')({ level: 'silent' }),
+    markOnlineOnConnect: false,
+    syncFullHistory: false
+  });
+
+  sock.ev.on('creds.update', saveCreds);
+  sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+    if (qr) {
+      console.log('\n========================================');
+      console.log('  SILAKAN SCAN QR CODE DI BAWAH INI');
+      console.log('  Gunakan menu "Perangkat Tertaut" di WhatsApp');
+      console.log('========================================\n');
+      qrcode.generate(qr, { small: true });
+    }
+
+    if (connection === 'open') {
+      isReady = true;
+      console.log('\nBOT SIAP BEROPERASI — WhatsApp terhubung!');
+      console.log(`Waktu mulai: ${getCurrentTimeWIB()}`);
+      console.log('--------------------------------------------------');
+    }
+
+    if (connection === 'close') {
+      isReady = false;
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      if (statusCode === DisconnectReason.loggedOut) {
+        console.error('[WHATSAPP] Sesi keluar. Hapus .baileys_session lalu mulai ulang untuk mendapatkan QR baru.');
+        return;
+      }
+
+      console.error(`[WHATSAPP] Koneksi terputus (${statusCode || 'tidak diketahui'}); mencoba menyambung kembali.`);
+      setTimeout(() => {
+        startWhatsApp().catch(err => {
+          console.error('[INISIALISASI GAGAL]', err);
+          process.exit(1);
+        });
+
+      }, 3000);
+    }
+  });
+
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
+    for (const message of messages) {
+      await handleIncomingMessage(sock, message);
+    }
+  });
+}
+
+startWhatsApp().catch(err => {
   console.error('[INISIALISASI GAGAL]', err);
   process.exit(1);
 });
