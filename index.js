@@ -4,7 +4,6 @@
  */
 
 require('dotenv').config();
-const http = require('node:http');
 const KNOWLEDGE_BASE = require('./knowledgeBase');
 
 const { Client, LocalAuth } = require('whatsapp-web.js');
@@ -38,21 +37,6 @@ let isReady = false;
 const pausedUsers = new Set();
 const conversationHistory = new Map();
 const MAX_HISTORY_LENGTH = 5;
-
-const healthServer = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/healthz') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('ok');
-    return;
-  }
-
-  res.writeHead(404);
-  res.end();
-});
-
-healthServer.listen(process.env.PORT || 3000, '0.0.0.0', () => {
-  console.log('[HTTP] Health check aktif');
-});
 
 // ==== FUNGSI BANTUAN ====
 function updateHistory(phoneNumber, role, content) {
