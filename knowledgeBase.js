@@ -13,7 +13,6 @@ PAKET BULANAN:
 - 10 Mbps: Rp116.550
 - 20 Mbps: Rp127.650
 - 30 Mbps: Rp138.750
-- 50 Mbps: Rp150.000
 - 50 Mbps: Rp166.500
 - 75 Mbps: Rp205.350
 - 100 Mbps: Rp233.100
